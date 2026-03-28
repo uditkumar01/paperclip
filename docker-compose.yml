@@ -14,13 +14,17 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      paperclip-net:
+        aliases:
+          - db
 
   server:
     build: .
     ports:
       - "3100:3100"
     environment:
-      DATABASE_URL: postgres://paperclip:paperclip@db:5432/paperclip
+      DATABASE_URL: "${DATABASE_URL:-postgres://paperclip:paperclip@db:5432/paperclip}"
       PORT: "3100"
       SERVE_UI: "true"
       PAPERCLIP_DEPLOYMENT_MODE: "authenticated"
@@ -29,6 +33,8 @@ services:
       BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set}"
     volumes:
       - paperclip-data:/paperclip
+    networks:
+      - paperclip-net
     depends_on:
       db:
         condition: service_healthy
@@ -36,3 +42,6 @@ services:
 volumes:
   pgdata:
   paperclip-data:
+
+networks:
+  paperclip-net:
