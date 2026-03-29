@@ -79,7 +79,10 @@ export async function testEnvironment(
   const envConfig = parseObject(config.env);
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(envConfig)) {
-    if (typeof value === "string") env[key] = value;
+    if (typeof value !== "string") continue;
+    // Mirror runtime behavior: empty OPENAI_API_KEY override does not mask host env.
+    if (key === "OPENAI_API_KEY" && value.trim().length === 0) continue;
+    env[key] = value;
   }
   const runtimeEnv = ensurePathInEnv({ ...process.env, ...env });
   const openAiKeyOverride = "OPENAI_API_KEY" in envConfig ? asString(envConfig.OPENAI_API_KEY, "") : null;

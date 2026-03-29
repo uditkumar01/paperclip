@@ -373,12 +373,20 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     env.PAPERCLIP_RUNTIME_PRIMARY_URL = runtimePrimaryUrl;
   }
   for (const [k, v] of Object.entries(envConfig)) {
-    if (typeof v === "string") env[k] = v;
+    if (typeof v !== "string") continue;
+    // Treat an empty OPENAI_API_KEY override as "unset" so the host/server key can be used.
+    if (k === "OPENAI_API_KEY" && v.trim().length === 0) continue;
+    env[k] = v;
   }
   if (hasEmptyOpenAiKeyOverride && hasHostOpenAiKey) {
     await onLog(
       "stderr",
-      "[paperclip] Warning: adapterConfig.env.OPENAI_API_KEY is empty and overrides non-empty server OPENAI_API_KEY. Remove the empty override or set a valid key.\n",
+      "[paperclip] Warning: adapterConfig.env.OPENAI_API_KEY is empty; ignoring override and using server OPENAI_API_KEY.\n",
+    );
+  } else if (hasEmptyOpenAiKeyOverride) {
+    await onLog(
+      "stderr",
+      "[paperclip] Warning: adapterConfig.env.OPENAI_API_KEY is empty and no server OPENAI_API_KEY is set.\n",
     );
   }
   if (!hasExplicitApiKey && authToken) {

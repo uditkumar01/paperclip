@@ -13,6 +13,7 @@ const payload = {
   argv: process.argv.slice(2),
   prompt: fs.readFileSync(0, "utf8"),
   codexHome: process.env.CODEX_HOME || null,
+  openAiApiKeyPresent: Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim().length > 0),
   paperclipEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("PAPERCLIP_"))
     .sort(),
@@ -32,6 +33,7 @@ type CapturePayload = {
   argv: string[];
   prompt: string;
   codexHome: string | null;
+  openAiApiKeyPresent: boolean;
   paperclipEnvKeys: string[];
 };
 
@@ -195,7 +197,7 @@ describe("codex execute", () => {
     }
   });
 
-  it("warns when an empty OPENAI_API_KEY override masks a non-empty host key", async () => {
+  it("warns when an empty OPENAI_API_KEY override is ignored in favor of host key", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-empty-key-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "codex");
@@ -243,10 +245,12 @@ describe("codex execute", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.openAiApiKeyPresent).toBe(true);
       expect(logs).toContainEqual(
         expect.objectContaining({
           stream: "stderr",
-          chunk: expect.stringContaining("adapterConfig.env.OPENAI_API_KEY is empty"),
+          chunk: expect.stringContaining("ignoring override and using server OPENAI_API_KEY"),
         }),
       );
     } finally {

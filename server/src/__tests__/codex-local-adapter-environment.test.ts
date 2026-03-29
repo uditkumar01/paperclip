@@ -99,7 +99,7 @@ describe("codex_local environment diagnostics", () => {
     }
   });
 
-  it("treats an empty OPENAI_API_KEY override as missing", async () => {
+  it("warns for an empty OPENAI_API_KEY override but falls back to host key", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-env-empty-key-"));
     const originalOpenAiKey = process.env.OPENAI_API_KEY;
     process.env.OPENAI_API_KEY = "sk-host-value";
@@ -121,10 +121,10 @@ describe("codex_local environment diagnostics", () => {
       expect(emptyOverrideCheck).toBeTruthy();
       expect(emptyOverrideCheck?.hint).toContain("empty");
 
-      const missingCheck = result.checks.find((check) => check.code === "codex_openai_api_key_missing");
-      expect(missingCheck).toBeTruthy();
-
-      expect(result.checks.some((check) => check.code === "codex_openai_api_key_present")).toBe(false);
+      const presentCheck = result.checks.find((check) => check.code === "codex_openai_api_key_present");
+      expect(presentCheck).toBeTruthy();
+      expect(presentCheck?.detail).toContain("server environment");
+      expect(result.checks.some((check) => check.code === "codex_openai_api_key_missing")).toBe(false);
     } finally {
       if (originalOpenAiKey === undefined) {
         delete process.env.OPENAI_API_KEY;
