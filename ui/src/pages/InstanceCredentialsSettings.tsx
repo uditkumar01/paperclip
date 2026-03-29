@@ -116,15 +116,19 @@ export function InstanceCredentialsSettings() {
 
   function saveTtl() {
     const raw = (ttlInput ?? "").trim();
-    const parsed = raw === "" ? null : Number.parseInt(raw, 10);
-    if (raw !== "" && (!Number.isInteger(parsed) || parsed < 0 || parsed > 3600)) {
-      setActionError("Codex validation TTL must be an integer between 0 and 3600 seconds.");
-      return;
+    let nextTtl: number | null = null;
+    if (raw !== "") {
+      const parsed = Number.parseInt(raw, 10);
+      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 3600) {
+        setActionError("Codex validation TTL must be an integer between 0 and 3600 seconds.");
+        return;
+      }
+      nextTtl = parsed;
     }
     patchMutation.mutate({
       action: "ttl",
       patch: {
-        codexOpenAiKeyValidationTtlSec: parsed,
+        codexOpenAiKeyValidationTtlSec: nextTtl,
       },
     });
   }
