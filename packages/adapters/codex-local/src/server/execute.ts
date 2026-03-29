@@ -23,6 +23,11 @@ import {
 import { parseCodexJsonl, isCodexUnknownSessionError } from "./parse.js";
 import { pathExists, prepareManagedCodexHome, resolveManagedCodexHomeDir, resolveSharedCodexHomeDir } from "./codex-home.js";
 import { resolveCodexDesiredSkillNames } from "./skills.js";
+import {
+  formatOpenAiKeyAttempts,
+  openAiKeySourceLabel,
+  resolveOpenAiApiKeyCandidates,
+} from "./openai-key-resolver.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const CODEX_ROLLOUT_NOISE_RE =
@@ -374,8 +379,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   }
   for (const [k, v] of Object.entries(envConfig)) {
     if (typeof v !== "string") continue;
-    // Treat an empty OPENAI_API_KEY override as "unset" so the host/server key can be used.
-    if (k === "OPENAI_API_KEY" && v.trim().length === 0) continue;
+    if (k === "OPENAI_API_KEY") continue;
     env[k] = v;
   }
   if (hasEmptyOpenAiKeyOverride && hasHostOpenAiKey) {
@@ -387,6 +391,21 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     await onLog(
       "stderr",
       "[paperclip] Warning: adapterConfig.env.OPENAI_API_KEY is empty and no server OPENAI_API_KEY is set.\n",
+    );
+  }
+  const openAiKeyResolution = await resolveOpenAiApiKeyCandidates({
+    adapterOpenAiKey: envConfig.OPENAI_API_KEY,
+    serverOpenAiKey: process.env.OPENAI_API_KEY,
+  });
+  if (openAiKeyResolution.selected) {
+    env.OPENAI_API_KEY = openAiKeyResolution.selected.key;
+    await onLog(
+      "stdout",
+      `[paperclip] OPENAI_API_KEY selected from ${openAiKeySourceLabel(openAiKeyResolution.selected.source)} (${openAiKeyResolution.selected.fromCache ? "cache" : "live"}, ttl=${openAiKeyResolution.ttlSec}s).\n`,
+    );
+  } else if (openAiKeyResolution.attempts.length > 0) {
+    throw new Error(
+      `No valid OPENAI_API_KEY candidate found. ${formatOpenAiKeyAttempts(openAiKeyResolution.attempts)}`,
     );
   }
   if (!hasExplicitApiKey && authToken) {

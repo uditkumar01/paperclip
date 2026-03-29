@@ -182,6 +182,55 @@ describe("codex_local environment diagnostics", () => {
     }
   });
 
+  it("falls back to server OPENAI_API_KEY when adapter override key is invalid", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-env-key-fallback-"));
+    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "sk-server-valid";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input, init) => {
+        const authorization = (() => {
+          if (!init || typeof init !== "object") return "";
+          const headers = (init as { headers?: unknown }).headers;
+          if (!headers || typeof headers !== "object") return "";
+          return String((headers as Record<string, unknown>).Authorization ?? "");
+        })();
+        const status = authorization.includes("sk-adapter-invalid") ? 401 : 200;
+        return new Response(JSON.stringify({ data: [] }), {
+          status,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+
+    try {
+      const result = await testEnvironment({
+        companyId: "company-1",
+        adapterType: "codex_local",
+        config: {
+          command: process.execPath,
+          cwd,
+          env: {
+            OPENAI_API_KEY: "sk-adapter-invalid",
+          },
+        },
+      });
+
+      const presentCheck = result.checks.find((check) => check.code === "codex_openai_api_key_present");
+      expect(presentCheck).toBeTruthy();
+      expect(presentCheck?.detail).toContain("server environment");
+      expect(result.checks.some((check) => check.code === "codex_openai_api_key_valid")).toBe(true);
+      expect(result.checks.some((check) => check.code === "codex_openai_api_key_invalid")).toBe(false);
+    } finally {
+      if (originalOpenAiKey === undefined) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = originalOpenAiKey;
+      }
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   itWindows("runs the hello probe when Codex is available via a Windows .cmd wrapper", async () => {
     const root = path.join(
       os.tmpdir(),

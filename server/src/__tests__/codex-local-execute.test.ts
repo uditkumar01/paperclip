@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -43,6 +43,22 @@ type LogEntry = {
 };
 
 describe("codex execute", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("uses a Paperclip-managed CODEX_HOME outside worktree mode while preserving shared auth and config", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-default-"));
     const workspace = path.join(root, "workspace");
@@ -253,6 +269,150 @@ describe("codex execute", () => {
           chunk: expect.stringContaining("ignoring override and using server OPENAI_API_KEY"),
         }),
       );
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previousOpenAiKey;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to server OPENAI_API_KEY when adapter key is invalid", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-key-fallback-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousOpenAiKey = process.env.OPENAI_API_KEY;
+    process.env.HOME = root;
+    process.env.OPENAI_API_KEY = "sk-valid";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input, init) => {
+        const authorization = (() => {
+          if (!init || typeof init !== "object") return "";
+          const headers = (init as { headers?: unknown }).headers;
+          if (!headers || typeof headers !== "object") return "";
+          return String((headers as Record<string, unknown>).Authorization ?? "");
+        })();
+        const status = authorization.includes("sk-invalid") ? 401 : 200;
+        return new Response(JSON.stringify({ data: [] }), {
+          status,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+
+    try {
+      const logs: LogEntry[] = [];
+      const result = await execute({
+        runId: "run-key-fallback",
+        agent: {
+          id: "agent-1",
+          companyId: "company-1",
+          name: "Codex Coder",
+          adapterType: "codex_local",
+          adapterConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+            OPENAI_API_KEY: "sk-invalid",
+          },
+          promptTemplate: "Follow the paperclip heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async (stream, chunk) => {
+          logs.push({ stream, chunk });
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.openAiApiKeyPresent).toBe(true);
+      expect(logs).toContainEqual(
+        expect.objectContaining({
+          stream: "stdout",
+          chunk: expect.stringContaining("OPENAI_API_KEY selected from server environment"),
+        }),
+      );
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previousOpenAiKey;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails fast when all OPENAI_API_KEY candidates are invalid", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-key-invalid-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousOpenAiKey = process.env.OPENAI_API_KEY;
+    process.env.HOME = root;
+    process.env.OPENAI_API_KEY = "sk-invalid-server";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: { message: "Unauthorized" } }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    try {
+      await expect(
+        execute({
+          runId: "run-key-invalid",
+          agent: {
+            id: "agent-1",
+            companyId: "company-1",
+            name: "Codex Coder",
+            adapterType: "codex_local",
+            adapterConfig: {},
+          },
+          runtime: {
+            sessionId: null,
+            sessionParams: null,
+            sessionDisplayId: null,
+            taskKey: null,
+          },
+          config: {
+            command: commandPath,
+            cwd: workspace,
+            env: {
+              PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+              OPENAI_API_KEY: "sk-invalid-adapter",
+            },
+            promptTemplate: "Follow the paperclip heartbeat.",
+          },
+          context: {},
+          authToken: "run-jwt-token",
+          onLog: async () => {},
+        }),
+      ).rejects.toThrow(/No valid OPENAI_API_KEY candidate found/);
+      await expect(fs.stat(capturePath)).rejects.toThrow();
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;

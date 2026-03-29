@@ -16,6 +16,11 @@ import {
 import path from "node:path";
 import { parseCodexJsonl } from "./parse.js";
 import { codexHomeDir, readCodexAuthInfo } from "./quota.js";
+import {
+  formatOpenAiKeyAttempts,
+  openAiKeySourceLabel,
+  resolveOpenAiApiKeyCandidates,
+} from "./openai-key-resolver.js";
 
 function summarizeStatus(checks: AdapterEnvironmentCheck[]): AdapterEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";
@@ -47,42 +52,6 @@ function summarizeProbeDetail(stdout: string, stderr: string, parsedError: strin
   const clean = raw.replace(/\s+/g, " ").trim();
   const max = 240;
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
-}
-
-type OpenAiKeyProbeResult =
-  | { status: "valid"; detail?: string }
-  | { status: "invalid"; detail?: string }
-  | { status: "rate_limited"; detail?: string }
-  | { status: "error"; detail?: string };
-
-async function probeOpenAiApiKeyViaModelsEndpoint(apiKey: string): Promise<OpenAiKeyProbeResult> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
-  try {
-    const response = await fetch("https://api.openai.com/v1/models", {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-      },
-      signal: controller.signal,
-    });
-    const detail = await response.text().then(firstNonEmptyLine).catch(() => "");
-
-    if (response.status === 200) {
-      return { status: "valid", detail: "OpenAI models endpoint accepted the API key." };
-    }
-    if (response.status === 401 || response.status === 403) {
-      return { status: "invalid", detail: detail || `OpenAI models endpoint returned ${response.status}.` };
-    }
-    if (response.status === 429) {
-      return { status: "rate_limited", detail: detail || "OpenAI models endpoint returned 429 rate limit." };
-    }
-    return { status: "error", detail: detail || `OpenAI models endpoint returned ${response.status}.` };
-  } catch (err) {
-    return { status: "error", detail: err instanceof Error ? err.message : String(err) };
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 const CODEX_AUTH_REQUIRED_RE =
@@ -146,49 +115,47 @@ export async function testEnvironment(
     });
   }
 
-  const configOpenAiKey = env.OPENAI_API_KEY;
-  const effectiveOpenAiKey = runtimeEnv.OPENAI_API_KEY;
-  if (isNonEmpty(effectiveOpenAiKey)) {
-    const source = isNonEmpty(configOpenAiKey) ? "adapter config env" : "server environment";
+  const openAiKeyResolution = await resolveOpenAiApiKeyCandidates({
+    adapterOpenAiKey: envConfig.OPENAI_API_KEY,
+    serverOpenAiKey: process.env.OPENAI_API_KEY,
+  });
+  if (openAiKeyResolution.selected) {
+    env.OPENAI_API_KEY = openAiKeyResolution.selected.key;
+    const source = openAiKeySourceLabel(openAiKeyResolution.selected.source);
     checks.push({
       code: "codex_openai_api_key_present",
       level: "info",
       message: "OPENAI_API_KEY is set for Codex authentication.",
-      detail: `Detected in ${source}.`,
+      detail: `Detected in ${source} (${openAiKeyResolution.selected.fromCache ? "cache" : "live"} validation).`,
     });
-
-    const keyProbeResult = await probeOpenAiApiKeyViaModelsEndpoint(effectiveOpenAiKey);
-    if (keyProbeResult.status === "valid") {
+    if (openAiKeyResolution.selected.status === "valid") {
       checks.push({
         code: "codex_openai_api_key_valid",
         level: "info",
         message: "OPENAI_API_KEY is valid for OpenAI API access.",
-        ...(keyProbeResult.detail ? { detail: keyProbeResult.detail } : {}),
+        ...(openAiKeyResolution.selected.detail ? { detail: openAiKeyResolution.selected.detail } : {}),
       });
-    } else if (keyProbeResult.status === "invalid") {
-      checks.push({
-        code: "codex_openai_api_key_invalid",
-        level: "warn",
-        message: "OPENAI_API_KEY failed OpenAI auth check.",
-        ...(keyProbeResult.detail ? { detail: keyProbeResult.detail } : {}),
-        hint: "Update OPENAI_API_KEY in adapter config/server env, then retry.",
-      });
-    } else if (keyProbeResult.status === "rate_limited") {
+    } else if (openAiKeyResolution.selected.status === "rate_limited") {
       checks.push({
         code: "codex_openai_api_key_rate_limited",
         level: "warn",
         message: "OpenAI API key check was rate-limited (429).",
-        ...(keyProbeResult.detail ? { detail: keyProbeResult.detail } : {}),
+        ...(openAiKeyResolution.selected.detail ? { detail: openAiKeyResolution.selected.detail } : {}),
         hint: "Retry later; key may still be valid.",
       });
-    } else {
-      checks.push({
-        code: "codex_openai_api_key_probe_error",
-        level: "warn",
-        message: "Could not verify OPENAI_API_KEY via OpenAI models endpoint.",
-        ...(keyProbeResult.detail ? { detail: keyProbeResult.detail } : {}),
-      });
     }
+  } else if (openAiKeyResolution.attempts.length > 0) {
+    const attemptsDetail = formatOpenAiKeyAttempts(openAiKeyResolution.attempts);
+    const hasInvalidAttempt = openAiKeyResolution.attempts.some((attempt) => attempt.status === "invalid");
+    checks.push({
+      code: hasInvalidAttempt ? "codex_openai_api_key_invalid" : "codex_openai_api_key_probe_error",
+      level: "warn",
+      message: hasInvalidAttempt
+        ? "All OPENAI_API_KEY candidates failed OpenAI auth check."
+        : "Could not verify any OPENAI_API_KEY candidate via OpenAI models endpoint.",
+      detail: attemptsDetail,
+      hint: "Update OPENAI_API_KEY in adapter config/server env, then retry.",
+    });
   } else {
     const codexHome = isNonEmpty(env.CODEX_HOME) ? env.CODEX_HOME : undefined;
     const codexAuth = await readCodexAuthInfo(codexHome).catch(() => null);
