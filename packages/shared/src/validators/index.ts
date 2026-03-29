@@ -7,6 +7,18 @@ export {
   patchInstanceExperimentalSettingsSchema,
   type InstanceExperimentalSettings,
   type PatchInstanceExperimentalSettings,
+  instanceCredentialsSettingsSchema,
+  patchInstanceCredentialInputSchema,
+  patchInstanceCredentialsEnvSchema,
+  patchInstanceCredentialsSettingsSchema,
+  instanceCredentialStatusSchema,
+  instanceCredentialsViewSchema,
+  type InstanceCredentialsSettings,
+  type PatchInstanceCredentialInput,
+  type PatchInstanceCredentialsEnv,
+  type PatchInstanceCredentialsSettings,
+  type InstanceCredentialStatus,
+  type InstanceCredentialsView,
 } from "./instance.js";
 
 export {

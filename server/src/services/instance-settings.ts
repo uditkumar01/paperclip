@@ -5,6 +5,8 @@ import {
   type InstanceGeneralSettings,
   instanceExperimentalSettingsSchema,
   type InstanceExperimentalSettings,
+  instanceCredentialsSettingsSchema,
+  type InstanceCredentialsSettings,
   type PatchInstanceGeneralSettings,
   type InstanceSettings,
   type PatchInstanceExperimentalSettings,
@@ -39,11 +41,26 @@ function normalizeExperimentalSettings(raw: unknown): InstanceExperimentalSettin
   };
 }
 
+function normalizeCredentialsSettings(raw: unknown): InstanceCredentialsSettings {
+  const parsed = instanceCredentialsSettingsSchema.safeParse(raw ?? {});
+  if (parsed.success) {
+    return {
+      envBindings: parsed.data.envBindings ?? {},
+      codexOpenAiKeyValidationTtlSec: parsed.data.codexOpenAiKeyValidationTtlSec ?? null,
+    };
+  }
+  return {
+    envBindings: {},
+    codexOpenAiKeyValidationTtlSec: null,
+  };
+}
+
 function toInstanceSettings(row: typeof instanceSettings.$inferSelect): InstanceSettings {
   return {
     id: row.id,
     general: normalizeGeneralSettings(row.general),
     experimental: normalizeExperimentalSettings(row.experimental),
+    credentials: normalizeCredentialsSettings(row.credentials),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -65,6 +82,7 @@ export function instanceSettingsService(db: Db) {
         singletonKey: DEFAULT_SINGLETON_KEY,
         general: {},
         experimental: {},
+        credentials: {},
         createdAt: now,
         updatedAt: now,
       })
@@ -90,6 +108,11 @@ export function instanceSettingsService(db: Db) {
     getExperimental: async (): Promise<InstanceExperimentalSettings> => {
       const row = await getOrCreateRow();
       return normalizeExperimentalSettings(row.experimental);
+    },
+
+    getCredentials: async (): Promise<InstanceCredentialsSettings> => {
+      const row = await getOrCreateRow();
+      return normalizeCredentialsSettings(row.credentials);
     },
 
     updateGeneral: async (patch: PatchInstanceGeneralSettings): Promise<InstanceSettings> => {
@@ -121,6 +144,21 @@ export function instanceSettingsService(db: Db) {
         .update(instanceSettings)
         .set({
           experimental: { ...nextExperimental },
+          updatedAt: now,
+        })
+        .where(eq(instanceSettings.id, current.id))
+        .returning();
+      return toInstanceSettings(updated ?? current);
+    },
+
+    updateCredentials: async (nextCredentials: InstanceCredentialsSettings): Promise<InstanceSettings> => {
+      const current = await getOrCreateRow();
+      const normalized = normalizeCredentialsSettings(nextCredentials);
+      const now = new Date();
+      const [updated] = await db
+        .update(instanceSettings)
+        .set({
+          credentials: { ...normalized },
           updatedAt: now,
         })
         .where(eq(instanceSettings.id, current.id))

@@ -31,6 +31,7 @@ import { findServerAdapter } from "../adapters/index.js";
 import { resolvePaperclipInstanceRoot } from "../home-paths.js";
 import { notFound, unprocessable } from "../errors.js";
 import { agentService } from "./agents.js";
+import { instanceCredentialService } from "./instance-credentials.js";
 import { projectService } from "./projects.js";
 import { secretService } from "./secrets.js";
 
@@ -1445,6 +1446,7 @@ export function companySkillService(db: Db) {
   const agents = agentService(db);
   const projects = projectService(db);
   const secretsSvc = secretService(db);
+  const instanceCredentials = instanceCredentialService(db);
 
   async function ensureBundledSkills(companyId: string) {
     for (const skillsRoot of resolveBundledSkillsRoot()) {
@@ -1573,13 +1575,15 @@ export function companySkillService(db: Db) {
               agent.companyId,
               agent.adapterConfig as Record<string, unknown>,
             );
+            const { config: configWithGlobalCredentials } =
+              await instanceCredentials.applyRuntimeCredentials(runtimeConfig);
             const runtimeSkillEntries = await listRuntimeSkillEntries(agent.companyId);
             const snapshot = await adapter.listSkills({
               agentId: agent.id,
               companyId: agent.companyId,
               adapterType: agent.adapterType,
               config: {
-                ...runtimeConfig,
+                ...configWithGlobalCredentials,
                 paperclipRuntimeSkills: runtimeSkillEntries,
               },
             });

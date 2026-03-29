@@ -37,6 +37,7 @@ import {
   heartbeatService,
   issueApprovalService,
   issueService,
+  instanceCredentialService,
   logActivity,
   secretService,
   syncInstructionsBundleConfigFromFilePath,
@@ -89,6 +90,7 @@ export function agentRoutes(db: Db) {
   const heartbeat = heartbeatService(db);
   const issueApprovalsSvc = issueApprovalService(db);
   const secretsSvc = secretService(db);
+  const instanceCredentials = instanceCredentialService(db);
   const instructions = agentInstructionsService();
   const companySkills = companySkillService(db);
   const workspaceOperations = workspaceOperationService(db);
@@ -411,7 +413,7 @@ export function agentRoutes(db: Db) {
     adapterConfig: Record<string, unknown>,
   ) {
     if (adapterType !== "opencode_local") return;
-    const { config: runtimeConfig } = await secretsSvc.resolveAdapterConfigForRuntime(companyId, adapterConfig);
+    const runtimeConfig = await resolveRuntimeAdapterConfig(companyId, adapterConfig);
     const runtimeEnv = asRecord(runtimeConfig.env) ?? {};
     try {
       await ensureOpenCodeModelConfiguredAndAvailable({
@@ -424,6 +426,18 @@ export function agentRoutes(db: Db) {
       const reason = err instanceof Error ? err.message : String(err);
       throw unprocessable(`Invalid opencode_local adapterConfig: ${reason}`);
     }
+  }
+
+  async function resolveRuntimeAdapterConfig(
+    companyId: string,
+    adapterConfig: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const { config: runtimeConfig } = await secretsSvc.resolveAdapterConfigForRuntime(
+      companyId,
+      adapterConfig,
+    );
+    const { config: withGlobalCredentials } = await instanceCredentials.applyRuntimeCredentials(runtimeConfig);
+    return withGlobalCredentials;
   }
 
   function resolveInstructionsFilePath(candidatePath: string, adapterConfig: Record<string, unknown>) {
@@ -692,10 +706,7 @@ export function agentRoutes(db: Db) {
         inputAdapterConfig,
         { strictMode: strictSecretsMode },
       );
-      const { config: runtimeAdapterConfig } = await secretsSvc.resolveAdapterConfigForRuntime(
-        companyId,
-        normalizedAdapterConfig,
-      );
+      const runtimeAdapterConfig = await resolveRuntimeAdapterConfig(companyId, normalizedAdapterConfig);
 
       const result = await adapter.testEnvironment({
         companyId,
@@ -729,10 +740,7 @@ export function agentRoutes(db: Db) {
       return;
     }
 
-    const { config: runtimeConfig } = await secretsSvc.resolveAdapterConfigForRuntime(
-      agent.companyId,
-      agent.adapterConfig,
-    );
+    const runtimeConfig = await resolveRuntimeAdapterConfig(agent.companyId, agent.adapterConfig);
     const runtimeSkillConfig = await buildRuntimeSkillConfig(
       agent.companyId,
       agent.adapterType,
@@ -795,10 +803,7 @@ export function agentRoutes(db: Db) {
       }
 
       const adapter = findServerAdapter(updated.adapterType);
-      const { config: runtimeConfig } = await secretsSvc.resolveAdapterConfigForRuntime(
-        updated.companyId,
-        updated.adapterConfig,
-      );
+      const runtimeConfig = await resolveRuntimeAdapterConfig(updated.companyId, updated.adapterConfig);
       const runtimeSkillConfig = {
         ...runtimeConfig,
         paperclipRuntimeSkills: runtimeSkillEntries,
@@ -2039,7 +2044,7 @@ export function agentRoutes(db: Db) {
     }
 
     const config = asRecord(agent.adapterConfig) ?? {};
-    const { config: runtimeConfig } = await secretsSvc.resolveAdapterConfigForRuntime(agent.companyId, config);
+    const runtimeConfig = await resolveRuntimeAdapterConfig(agent.companyId, config);
     const result = await runClaudeLogin({
       runId: `claude-login-${randomUUID()}`,
       agent: {

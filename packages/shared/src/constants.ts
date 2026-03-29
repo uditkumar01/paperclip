@@ -204,6 +204,15 @@ export const SECRET_PROVIDERS = [
 ] as const;
 export type SecretProvider = (typeof SECRET_PROVIDERS)[number];
 
+export const INSTANCE_CREDENTIAL_ENV_KEYS = [
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "CURSOR_API_KEY",
+] as const;
+export type InstanceCredentialEnvKey = (typeof INSTANCE_CREDENTIAL_ENV_KEYS)[number];
+
 export const STORAGE_PROVIDERS = ["local_disk", "s3"] as const;
 export type StorageProvider = (typeof STORAGE_PROVIDERS)[number];
 

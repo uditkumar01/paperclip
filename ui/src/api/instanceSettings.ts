@@ -1,6 +1,8 @@
 import type {
+  InstanceCredentialsView,
   InstanceExperimentalSettings,
   InstanceGeneralSettings,
+  PatchInstanceCredentialsSettings,
   PatchInstanceGeneralSettings,
   PatchInstanceExperimentalSettings,
 } from "@paperclipai/shared";
@@ -15,4 +17,8 @@ export const instanceSettingsApi = {
     api.get<InstanceExperimentalSettings>("/instance/settings/experimental"),
   updateExperimental: (patch: PatchInstanceExperimentalSettings) =>
     api.patch<InstanceExperimentalSettings>("/instance/settings/experimental", patch),
+  getCredentials: () =>
+    api.get<InstanceCredentialsView>("/instance/settings/credentials"),
+  updateCredentials: (patch: PatchInstanceCredentialsSettings) =>
+    api.patch<InstanceCredentialsView>("/instance/settings/credentials", patch),
 };

@@ -7,14 +7,21 @@ import { instanceSettingsRoutes } from "../routes/instance-settings.js";
 const mockInstanceSettingsService = vi.hoisted(() => ({
   getGeneral: vi.fn(),
   getExperimental: vi.fn(),
+  getCredentials: vi.fn(),
   updateGeneral: vi.fn(),
   updateExperimental: vi.fn(),
+  updateCredentials: vi.fn(),
   listCompanyIds: vi.fn(),
+}));
+const mockInstanceCredentialService = vi.hoisted(() => ({
+  getView: vi.fn(),
+  update: vi.fn(),
 }));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/index.js", () => ({
   instanceSettingsService: () => mockInstanceSettingsService,
+  instanceCredentialService: () => mockInstanceCredentialService,
   logActivity: mockLogActivity,
 }));
 
@@ -40,6 +47,10 @@ describe("instance settings routes", () => {
       enableIsolatedWorkspaces: false,
       autoRestartDevServerWhenIdle: false,
     });
+    mockInstanceSettingsService.getCredentials.mockResolvedValue({
+      envBindings: {},
+      codexOpenAiKeyValidationTtlSec: null,
+    });
     mockInstanceSettingsService.updateGeneral.mockResolvedValue({
       id: "instance-settings-1",
       general: {
@@ -52,6 +63,32 @@ describe("instance settings routes", () => {
         enableIsolatedWorkspaces: true,
         autoRestartDevServerWhenIdle: false,
       },
+    });
+    mockInstanceCredentialService.getView.mockResolvedValue({
+      precedence: "global_overrides_agent",
+      codexOpenAiKeyValidationTtlSec: null,
+      credentials: [
+        {
+          key: "OPENAI_API_KEY",
+          configured: false,
+          provider: null,
+          fingerprint: null,
+          updatedAt: null,
+        },
+      ],
+    });
+    mockInstanceCredentialService.update.mockResolvedValue({
+      precedence: "global_overrides_agent",
+      codexOpenAiKeyValidationTtlSec: 0,
+      credentials: [
+        {
+          key: "OPENAI_API_KEY",
+          configured: true,
+          provider: "local_encrypted",
+          fingerprint: "abcd1234ef56",
+          updatedAt: new Date("2026-03-29T00:00:00.000Z"),
+        },
+      ],
     });
     mockInstanceSettingsService.listCompanyIds.mockResolvedValue(["company-1", "company-2"]);
   });
@@ -152,5 +189,49 @@ describe("instance settings routes", () => {
 
     expect(res.status).toBe(403);
     expect(mockInstanceSettingsService.updateGeneral).not.toHaveBeenCalled();
+  });
+
+  it("allows local board users to read credentials settings", async () => {
+    const app = createApp({
+      type: "board",
+      userId: "local-board",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+    });
+
+    const res = await request(app).get("/api/instance/settings/credentials");
+    expect(res.status).toBe(200);
+    expect(mockInstanceCredentialService.getView).toHaveBeenCalledTimes(1);
+    expect(res.body.precedence).toBe("global_overrides_agent");
+  });
+
+  it("allows local board users to update credentials settings", async () => {
+    const app = createApp({
+      type: "board",
+      userId: "local-board",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+    });
+
+    const res = await request(app)
+      .patch("/api/instance/settings/credentials")
+      .send({
+        env: {
+          OPENAI_API_KEY: { value: "sk-new-value" },
+        },
+        codexOpenAiKeyValidationTtlSec: 0,
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockInstanceCredentialService.update).toHaveBeenCalledWith(
+      {
+        env: {
+          OPENAI_API_KEY: { value: "sk-new-value" },
+        },
+        codexOpenAiKeyValidationTtlSec: 0,
+      },
+      { userId: "local-board", agentId: null },
+    );
+    expect(mockLogActivity).toHaveBeenCalledTimes(2);
   });
 });

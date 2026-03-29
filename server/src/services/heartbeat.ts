@@ -28,6 +28,7 @@ import { costService } from "./costs.js";
 import { companySkillService } from "./company-skills.js";
 import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
 import { secretService } from "./secrets.js";
+import { instanceCredentialService } from "./instance-credentials.js";
 import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } from "../home-paths.js";
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import {
@@ -773,6 +774,7 @@ export function heartbeatService(db: Db) {
 
   const runLogStore = getRunLogStore();
   const secretsSvc = secretService(db);
+  const instanceCredentials = instanceCredentialService(db);
   const companySkills = companySkillService(db);
   const issuesSvc = issueService(db);
   const executionWorkspacesSvc = executionWorkspaceService(db);
@@ -2055,9 +2057,10 @@ export function heartbeatService(db: Db) {
       agent.companyId,
       mergedConfig,
     );
+    const { config: configWithGlobalCredentials } = await instanceCredentials.applyRuntimeCredentials(resolvedConfig);
     const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(agent.companyId);
     const runtimeConfig = {
-      ...resolvedConfig,
+      ...configWithGlobalCredentials,
       paperclipRuntimeSkills: runtimeSkillEntries,
     };
     const issueRef = issueContext
