@@ -261,6 +261,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
   const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
   const envConfig = parseObject(config.env);
+  const hasEmptyOpenAiKeyOverride =
+    "OPENAI_API_KEY" in envConfig && asString(envConfig.OPENAI_API_KEY, "").trim() === "";
+  const hasHostOpenAiKey = typeof process.env.OPENAI_API_KEY === "string" && process.env.OPENAI_API_KEY.trim().length > 0;
   const configuredCodexHome =
     typeof envConfig.CODEX_HOME === "string" && envConfig.CODEX_HOME.trim().length > 0
       ? path.resolve(envConfig.CODEX_HOME.trim())
@@ -371,6 +374,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   }
   for (const [k, v] of Object.entries(envConfig)) {
     if (typeof v === "string") env[k] = v;
+  }
+  if (hasEmptyOpenAiKeyOverride && hasHostOpenAiKey) {
+    await onLog(
+      "stderr",
+      "[paperclip] Warning: adapterConfig.env.OPENAI_API_KEY is empty and overrides non-empty server OPENAI_API_KEY. Remove the empty override or set a valid key.\n",
+    );
   }
   if (!hasExplicitApiKey && authToken) {
     env.PAPERCLIP_API_KEY = authToken;

@@ -99,6 +99,42 @@ describe("codex_local environment diagnostics", () => {
     }
   });
 
+  it("treats an empty OPENAI_API_KEY override as missing", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-env-empty-key-"));
+    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "sk-host-value";
+
+    try {
+      const result = await testEnvironment({
+        companyId: "company-1",
+        adapterType: "codex_local",
+        config: {
+          command: process.execPath,
+          cwd,
+          env: {
+            OPENAI_API_KEY: "",
+          },
+        },
+      });
+
+      const emptyOverrideCheck = result.checks.find((check) => check.code === "codex_openai_api_key_override_empty");
+      expect(emptyOverrideCheck).toBeTruthy();
+      expect(emptyOverrideCheck?.hint).toContain("empty");
+
+      const missingCheck = result.checks.find((check) => check.code === "codex_openai_api_key_missing");
+      expect(missingCheck).toBeTruthy();
+
+      expect(result.checks.some((check) => check.code === "codex_openai_api_key_present")).toBe(false);
+    } finally {
+      if (originalOpenAiKey === undefined) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = originalOpenAiKey;
+      }
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   itWindows("runs the hello probe when Codex is available via a Windows .cmd wrapper", async () => {
     const root = path.join(
       os.tmpdir(),

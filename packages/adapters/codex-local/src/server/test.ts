@@ -82,6 +82,15 @@ export async function testEnvironment(
     if (typeof value === "string") env[key] = value;
   }
   const runtimeEnv = ensurePathInEnv({ ...process.env, ...env });
+  const openAiKeyOverride = "OPENAI_API_KEY" in envConfig ? asString(envConfig.OPENAI_API_KEY, "") : null;
+  if (openAiKeyOverride !== null && openAiKeyOverride.trim() === "") {
+    checks.push({
+      code: "codex_openai_api_key_override_empty",
+      level: "warn",
+      message: "OPENAI_API_KEY override is empty.",
+      hint: "The OPENAI_API_KEY override is empty. Set a valid key or remove the override.",
+    });
+  }
   try {
     await ensureCommandResolvable(command, cwd, runtimeEnv);
     checks.push({
@@ -99,8 +108,8 @@ export async function testEnvironment(
   }
 
   const configOpenAiKey = env.OPENAI_API_KEY;
-  const hostOpenAiKey = process.env.OPENAI_API_KEY;
-  if (isNonEmpty(configOpenAiKey) || isNonEmpty(hostOpenAiKey)) {
+  const effectiveOpenAiKey = runtimeEnv.OPENAI_API_KEY;
+  if (isNonEmpty(effectiveOpenAiKey)) {
     const source = isNonEmpty(configOpenAiKey) ? "adapter config env" : "server environment";
     checks.push({
       code: "codex_openai_api_key_present",
