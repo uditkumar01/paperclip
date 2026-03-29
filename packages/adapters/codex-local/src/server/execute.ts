@@ -24,6 +24,7 @@ import { parseCodexJsonl, isCodexUnknownSessionError } from "./parse.js";
 import { pathExists, prepareManagedCodexHome, resolveManagedCodexHomeDir, resolveSharedCodexHomeDir } from "./codex-home.js";
 import { resolveCodexDesiredSkillNames } from "./skills.js";
 import {
+  formatOpenAiApiKeyView,
   formatOpenAiKeyAttempts,
   openAiKeySourceLabel,
   resolveOpenAiApiKeyCandidates,
@@ -399,9 +400,13 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   });
   if (openAiKeyResolution.selected) {
     env.OPENAI_API_KEY = openAiKeyResolution.selected.key;
+    const ttlLabel =
+      openAiKeyResolution.ttlSec === 0
+        ? "cache=disabled"
+        : `cache_ttl=${openAiKeyResolution.ttlSec}s`;
     await onLog(
       "stdout",
-      `[paperclip] OPENAI_API_KEY selected from ${openAiKeySourceLabel(openAiKeyResolution.selected.source)} (${openAiKeyResolution.selected.fromCache ? "cache" : "live"}, ttl=${openAiKeyResolution.ttlSec}s).\n`,
+      `[paperclip] OPENAI_API_KEY selected from ${openAiKeySourceLabel(openAiKeyResolution.selected.source)} (${openAiKeyResolution.selected.fromCache ? "cache" : "live"}, ${ttlLabel}, key=${formatOpenAiApiKeyView(openAiKeyResolution.selected.key)}).\n`,
     );
   } else if (openAiKeyResolution.attempts.length > 0) {
     throw new Error(

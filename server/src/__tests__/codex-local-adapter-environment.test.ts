@@ -231,6 +231,59 @@ describe("codex_local environment diagnostics", () => {
     }
   });
 
+  it("shows selected key view and supports disabling key-validation cache with TTL=0", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-env-key-view-"));
+    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    const originalTtl = process.env.PAPERCLIP_CODEX_OPENAI_KEY_VALIDATION_TTL_SEC;
+    process.env.OPENAI_API_KEY = "sk-server-valid";
+    process.env.PAPERCLIP_CODEX_OPENAI_KEY_VALIDATION_TTL_SEC = "0";
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const first = await testEnvironment({
+        companyId: "company-1",
+        adapterType: "codex_local",
+        config: {
+          command: process.execPath,
+          cwd,
+        },
+      });
+      const second = await testEnvironment({
+        companyId: "company-1",
+        adapterType: "codex_local",
+        config: {
+          command: process.execPath,
+          cwd,
+        },
+      });
+
+      const firstPresentCheck = first.checks.find((check) => check.code === "codex_openai_api_key_present");
+      const selectedCheck = first.checks.find((check) => check.code === "codex_openai_api_key_selected");
+      expect(firstPresentCheck?.detail).toContain("TTL=0");
+      expect(selectedCheck?.detail).toContain("sha256:");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(second.checks.some((check) => check.code === "codex_openai_api_key_selected")).toBe(true);
+    } finally {
+      if (originalOpenAiKey === undefined) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = originalOpenAiKey;
+      }
+      if (originalTtl === undefined) {
+        delete process.env.PAPERCLIP_CODEX_OPENAI_KEY_VALIDATION_TTL_SEC;
+      } else {
+        process.env.PAPERCLIP_CODEX_OPENAI_KEY_VALIDATION_TTL_SEC = originalTtl;
+      }
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   itWindows("runs the hello probe when Codex is available via a Windows .cmd wrapper", async () => {
     const root = path.join(
       os.tmpdir(),

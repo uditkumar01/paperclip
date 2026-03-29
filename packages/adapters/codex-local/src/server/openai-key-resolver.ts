@@ -27,7 +27,7 @@ type CachedProbe = {
 };
 
 const DEFAULT_TTL_SEC = 300;
-const MIN_TTL_SEC = 15;
+const MIN_POSITIVE_TTL_SEC = 15;
 const MAX_TTL_SEC = 3600;
 const probeCache = new Map<string, CachedProbe>();
 
@@ -35,11 +35,17 @@ function nowMs() {
   return Date.now();
 }
 
+function normalizeTtlSecValue(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_TTL_SEC;
+  const rounded = Math.trunc(value);
+  if (rounded === 0) return 0;
+  if (rounded < 0) return DEFAULT_TTL_SEC;
+  return Math.max(MIN_POSITIVE_TTL_SEC, Math.min(MAX_TTL_SEC, rounded));
+}
+
 function normalizeTtlSec(raw: string | undefined): number {
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_TTL_SEC;
-  const rounded = Math.trunc(parsed);
-  return Math.max(MIN_TTL_SEC, Math.min(MAX_TTL_SEC, rounded));
+  if (raw === undefined) return DEFAULT_TTL_SEC;
+  return normalizeTtlSecValue(Number(raw));
 }
 
 function normalizeKey(value: unknown): string | null {
@@ -95,6 +101,13 @@ export function openAiKeySourceLabel(source: OpenAiKeySource): string {
   return source === "adapter_config_env" ? "adapter config env" : "server environment";
 }
 
+export function formatOpenAiApiKeyView(key: string): string {
+  const trimmed = key.trim();
+  const suffix = trimmed.slice(-4);
+  const fingerprint = createHash("sha256").update(trimmed).digest("hex").slice(0, 8);
+  return `***${suffix} (sha256:${fingerprint})`;
+}
+
 export function formatOpenAiKeyAttempts(attempts: OpenAiKeyAttempt[]): string {
   return attempts
     .map((attempt) => {
@@ -113,8 +126,9 @@ export async function resolveOpenAiApiKeyCandidates(input: {
 }): Promise<OpenAiKeyResolution> {
   const ttlSec =
     input.ttlSec !== undefined
-      ? Math.max(MIN_TTL_SEC, Math.min(MAX_TTL_SEC, Math.trunc(input.ttlSec)))
+      ? normalizeTtlSecValue(input.ttlSec)
       : normalizeTtlSec(process.env.PAPERCLIP_CODEX_OPENAI_KEY_VALIDATION_TTL_SEC);
+  const cachingEnabled = ttlSec > 0;
 
   const orderedCandidates: Array<{ source: OpenAiKeySource; key: string }> = [];
   const adapterKey = normalizeKey(input.adapterOpenAiKey);
@@ -132,7 +146,7 @@ export async function resolveOpenAiApiKeyCandidates(input: {
   const attempts: OpenAiKeyAttempt[] = [];
   for (const candidate of deduped) {
     const cacheId = keyCacheId(candidate.key);
-    const cached = probeCache.get(cacheId);
+    const cached = cachingEnabled ? probeCache.get(cacheId) : undefined;
     const now = nowMs();
     if (cached && cached.expiresAtMs > now) {
       const attempt: OpenAiKeyAttempt = {
@@ -149,11 +163,13 @@ export async function resolveOpenAiApiKeyCandidates(input: {
     }
 
     const probed = await probeOpenAiKey(candidate.key);
-    probeCache.set(cacheId, {
-      status: probed.status,
-      detail: probed.detail,
-      expiresAtMs: now + ttlSec * 1000,
-    });
+    if (cachingEnabled) {
+      probeCache.set(cacheId, {
+        status: probed.status,
+        detail: probed.detail,
+        expiresAtMs: now + ttlSec * 1000,
+      });
+    }
     const attempt: OpenAiKeyAttempt = {
       source: candidate.source,
       status: probed.status,

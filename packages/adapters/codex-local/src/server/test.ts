@@ -17,6 +17,7 @@ import path from "node:path";
 import { parseCodexJsonl } from "./parse.js";
 import { codexHomeDir, readCodexAuthInfo } from "./quota.js";
 import {
+  formatOpenAiApiKeyView,
   formatOpenAiKeyAttempts,
   openAiKeySourceLabel,
   resolveOpenAiApiKeyCandidates,
@@ -122,11 +123,19 @@ export async function testEnvironment(
   if (openAiKeyResolution.selected) {
     env.OPENAI_API_KEY = openAiKeyResolution.selected.key;
     const source = openAiKeySourceLabel(openAiKeyResolution.selected.source);
+    const ttlLabel =
+      openAiKeyResolution.ttlSec === 0 ? "cache disabled (TTL=0)" : `cache TTL ${openAiKeyResolution.ttlSec}s`;
     checks.push({
       code: "codex_openai_api_key_present",
       level: "info",
       message: "OPENAI_API_KEY is set for Codex authentication.",
-      detail: `Detected in ${source} (${openAiKeyResolution.selected.fromCache ? "cache" : "live"} validation).`,
+      detail: `Detected in ${source} (${openAiKeyResolution.selected.fromCache ? "cache" : "live"} validation, ${ttlLabel}).`,
+    });
+    checks.push({
+      code: "codex_openai_api_key_selected",
+      level: "info",
+      message: "Current OPENAI_API_KEY selection for Codex runtime.",
+      detail: `${formatOpenAiApiKeyView(openAiKeyResolution.selected.key)} from ${source}.`,
     });
     if (openAiKeyResolution.selected.status === "valid") {
       checks.push({
