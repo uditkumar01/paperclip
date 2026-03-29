@@ -9,8 +9,18 @@ const itWindows = process.platform === "win32" ? it : it.skip;
 describe("codex_local environment diagnostics", () => {
   beforeEach(() => {
     vi.stubEnv("OPENAI_API_KEY", "");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
   });
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.unstubAllEnvs();
   });
   it("creates a missing working directory when cwd is absolute", async () => {
@@ -124,7 +134,44 @@ describe("codex_local environment diagnostics", () => {
       const presentCheck = result.checks.find((check) => check.code === "codex_openai_api_key_present");
       expect(presentCheck).toBeTruthy();
       expect(presentCheck?.detail).toContain("server environment");
+      expect(result.checks.some((check) => check.code === "codex_openai_api_key_valid")).toBe(true);
       expect(result.checks.some((check) => check.code === "codex_openai_api_key_missing")).toBe(false);
+    } finally {
+      if (originalOpenAiKey === undefined) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = originalOpenAiKey;
+      }
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("emits codex_openai_api_key_invalid when OpenAI models probe returns 401", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-env-invalid-key-"));
+    const originalOpenAiKey = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "sk-invalid";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: { message: "Unauthorized" } }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    try {
+      const result = await testEnvironment({
+        companyId: "company-1",
+        adapterType: "codex_local",
+        config: {
+          command: process.execPath,
+          cwd,
+        },
+      });
+
+      expect(result.checks.some((check) => check.code === "codex_openai_api_key_present")).toBe(true);
+      expect(result.checks.some((check) => check.code === "codex_openai_api_key_invalid")).toBe(true);
     } finally {
       if (originalOpenAiKey === undefined) {
         delete process.env.OPENAI_API_KEY;

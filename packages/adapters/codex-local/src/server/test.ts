@@ -49,6 +49,42 @@ function summarizeProbeDetail(stdout: string, stderr: string, parsedError: strin
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
 }
 
+type OpenAiKeyProbeResult =
+  | { status: "valid"; detail?: string }
+  | { status: "invalid"; detail?: string }
+  | { status: "rate_limited"; detail?: string }
+  | { status: "error"; detail?: string };
+
+async function probeOpenAiApiKeyViaModelsEndpoint(apiKey: string): Promise<OpenAiKeyProbeResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetch("https://api.openai.com/v1/models", {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      signal: controller.signal,
+    });
+    const detail = await response.text().then(firstNonEmptyLine).catch(() => "");
+
+    if (response.status === 200) {
+      return { status: "valid", detail: "OpenAI models endpoint accepted the API key." };
+    }
+    if (response.status === 401 || response.status === 403) {
+      return { status: "invalid", detail: detail || `OpenAI models endpoint returned ${response.status}.` };
+    }
+    if (response.status === 429) {
+      return { status: "rate_limited", detail: detail || "OpenAI models endpoint returned 429 rate limit." };
+    }
+    return { status: "error", detail: detail || `OpenAI models endpoint returned ${response.status}.` };
+  } catch (err) {
+    return { status: "error", detail: err instanceof Error ? err.message : String(err) };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 const CODEX_AUTH_REQUIRED_RE =
   /(?:not\s+logged\s+in|login\s+required|authentication\s+required|unauthorized|invalid(?:\s+or\s+missing)?\s+api(?:[_\s-]?key)?|openai[_\s-]?api[_\s-]?key|api[_\s-]?key.*required|please\s+run\s+`?codex\s+login`?)/i;
 
@@ -120,6 +156,39 @@ export async function testEnvironment(
       message: "OPENAI_API_KEY is set for Codex authentication.",
       detail: `Detected in ${source}.`,
     });
+
+    const keyProbeResult = await probeOpenAiApiKeyViaModelsEndpoint(effectiveOpenAiKey);
+    if (keyProbeResult.status === "valid") {
+      checks.push({
+        code: "codex_openai_api_key_valid",
+        level: "info",
+        message: "OPENAI_API_KEY is valid for OpenAI API access.",
+        ...(keyProbeResult.detail ? { detail: keyProbeResult.detail } : {}),
+      });
+    } else if (keyProbeResult.status === "invalid") {
+      checks.push({
+        code: "codex_openai_api_key_invalid",
+        level: "warn",
+        message: "OPENAI_API_KEY failed OpenAI auth check.",
+        ...(keyProbeResult.detail ? { detail: keyProbeResult.detail } : {}),
+        hint: "Update OPENAI_API_KEY in adapter config/server env, then retry.",
+      });
+    } else if (keyProbeResult.status === "rate_limited") {
+      checks.push({
+        code: "codex_openai_api_key_rate_limited",
+        level: "warn",
+        message: "OpenAI API key check was rate-limited (429).",
+        ...(keyProbeResult.detail ? { detail: keyProbeResult.detail } : {}),
+        hint: "Retry later; key may still be valid.",
+      });
+    } else {
+      checks.push({
+        code: "codex_openai_api_key_probe_error",
+        level: "warn",
+        message: "Could not verify OPENAI_API_KEY via OpenAI models endpoint.",
+        ...(keyProbeResult.detail ? { detail: keyProbeResult.detail } : {}),
+      });
+    }
   } else {
     const codexHome = isNonEmpty(env.CODEX_HOME) ? env.CODEX_HOME : undefined;
     const codexAuth = await readCodexAuthInfo(codexHome).catch(() => null);
